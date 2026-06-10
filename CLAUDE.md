@@ -14,7 +14,7 @@ corepack enable && corepack prepare yarn@1.22.22 --activate
 yarn
 
 # 开发
-yarn dev          # 启动开发服务器
+yarn dev          # 启动开发服务器（偶发白屏时不推荐优先使用）
 
 # 构建与部署
 yarn build        # 生产构建（输出到 .output/）
@@ -26,6 +26,26 @@ yarn format       # biome check --write
 # Docker
 yarn docker:build
 yarn docker:publish
+```
+
+### 本地运行建议
+
+- 这台机器上 `yarn dev` 偶发会出现 Nuxt / Vite 前端产物失配，表现为空白页
+- 日常本地使用更推荐：
+
+```bash
+yarn build
+node .output/server/index.mjs
+```
+
+- 该方式会直接运行生产构建产物，稳定性更高
+- 服务地址：
+  - `http://127.0.0.1:3000/dashboard/account`
+
+如果 `yarn dev` 出现空白页，通常需要先清理：
+
+```bash
+rm -rf .nuxt .output node_modules/.vite
 ```
 
 ## 架构

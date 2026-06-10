@@ -38,6 +38,36 @@
 
 该工具的使用教程已移至 [文档站点](https://docs.mptext.top)。
 
+## :rocket: 本地启动建议
+
+当前仓库在这台机器上使用 `yarn dev` 时，偶发会出现 Nuxt / Vite 前端产物失配，表现为空白页。
+
+因此，日常本地使用更推荐下面这种方式：
+
+```bash
+yarn build
+node .output/server/index.mjs
+```
+
+说明：
+
+- 该启动方式更稳定
+- 服务默认监听 `3000` 端口
+- 推荐直接访问：
+  - `http://127.0.0.1:3000/dashboard/account`
+
+如果只是改前端样式或做开发调试，也可以使用：
+
+```bash
+yarn dev
+```
+
+但如果遇到空白页，通常需要清理以下目录后重新启动：
+
+```bash
+rm -rf .nuxt .output node_modules/.vite
+```
+
 ## :floppy_disk: 元数据持久化与增量同步
 
 当前仓库支持将公众号元数据与文章元数据持久化到 MySQL，用于避免重复同步历史文章。

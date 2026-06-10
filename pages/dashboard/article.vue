@@ -22,6 +22,7 @@ import GridCoverTooltip from '~/components/grid/CoverTooltip.vue';
 import GridStatusBar from '~/components/grid/StatusBar.vue';
 import BaseDatePicker from '~/components/base/DatePicker.vue';
 import AccountSelectorForArticle from '~/components/selector/AccountSelectorForArticle.vue';
+import toastFactory from '~/composables/toast';
 import { isDev, websiteName } from '~/config';
 import { sharedGridOptions } from '~/config/shared-grid-options';
 import { articleDeleted, getArticleCache, updateArticleStatus } from '~/store/v2/article';
@@ -356,6 +357,7 @@ function onFilterChanged(event: FilterChangedEvent) {
 
 const preferences = usePreferences();
 const hideDeleted = computed(() => (preferences.value as unknown as Preferences).hideDeleted);
+const toast = toastFactory();
 
 const previewArticleRef = ref<typeof PreviewArticle | null>(null);
 
@@ -414,6 +416,13 @@ async function switchTableData(fakeid: string) {
   loading.value = true;
   const articles: Article[] = [];
   const data = await getArticleCache(fakeid, Math.floor(Date.now() / 1000));
+  const accountInfo = selectedAccount.value;
+  if (data.length === 0 && accountInfo && accountInfo.articles > 0) {
+    toast.warning(
+      '文章明细缺失',
+      `公众号【${accountInfo.nickname}】显示已同步 ${accountInfo.articles} 篇文章，但当前文章明细为空。请回到“公众号管理”对该公众号执行一次全量同步。`
+    );
+  }
   for (const article of data) {
     const contentDownload = (await getHtmlCache(article.link)) !== undefined;
     const commentDownload = (await getCommentCache(article.link)) !== undefined;

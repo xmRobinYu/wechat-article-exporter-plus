@@ -9,6 +9,7 @@ interface AccountRow extends RowDataPacket {
   completed: number;
   count: number;
   articles: number;
+  detail_article_count: number;
   total_count: number;
   create_time: number | null;
   update_time: number | null;
@@ -24,6 +25,7 @@ function mapAccountRow(row: AccountRow): MpAccount {
     completed: Boolean(row.completed),
     count: row.count,
     articles: row.articles,
+    detail_article_count: row.detail_article_count,
     total_count: row.total_count,
     create_time: row.create_time || undefined,
     update_time: row.update_time || undefined,
@@ -35,7 +37,27 @@ function mapAccountRow(row: AccountRow): MpAccount {
 export async function listAccounts(): Promise<MpAccount[]> {
   const db = await getMysqlPool();
   const [rows] = await db.query<AccountRow[]>(
-    'SELECT fakeid, nickname, round_head_img, completed, count, articles, total_count, create_time, update_time, last_update_time, latest_synced_article_time FROM mp_accounts ORDER BY COALESCE(update_time, create_time, 0) DESC'
+    `
+      SELECT
+        a.fakeid,
+        a.nickname,
+        a.round_head_img,
+        a.completed,
+        a.count,
+        a.articles,
+        COUNT(m.id) AS detail_article_count,
+        a.total_count,
+        a.create_time,
+        a.update_time,
+        a.last_update_time,
+        a.latest_synced_article_time
+      FROM mp_accounts a
+      LEFT JOIN mp_articles m ON m.fakeid = a.fakeid
+      GROUP BY
+        a.fakeid, a.nickname, a.round_head_img, a.completed, a.count, a.articles,
+        a.total_count, a.create_time, a.update_time, a.last_update_time, a.latest_synced_article_time
+      ORDER BY COALESCE(a.update_time, a.create_time, 0) DESC
+    `
   );
   return rows.map(mapAccountRow);
 }
@@ -43,7 +65,28 @@ export async function listAccounts(): Promise<MpAccount[]> {
 export async function getAccount(fakeid: string): Promise<MpAccount | undefined> {
   const db = await getMysqlPool();
   const [rows] = await db.query<AccountRow[]>(
-    'SELECT fakeid, nickname, round_head_img, completed, count, articles, total_count, create_time, update_time, last_update_time, latest_synced_article_time FROM mp_accounts WHERE fakeid = ? LIMIT 1',
+    `
+      SELECT
+        a.fakeid,
+        a.nickname,
+        a.round_head_img,
+        a.completed,
+        a.count,
+        a.articles,
+        COUNT(m.id) AS detail_article_count,
+        a.total_count,
+        a.create_time,
+        a.update_time,
+        a.last_update_time,
+        a.latest_synced_article_time
+      FROM mp_accounts a
+      LEFT JOIN mp_articles m ON m.fakeid = a.fakeid
+      WHERE a.fakeid = ?
+      GROUP BY
+        a.fakeid, a.nickname, a.round_head_img, a.completed, a.count, a.articles,
+        a.total_count, a.create_time, a.update_time, a.last_update_time, a.latest_synced_article_time
+      LIMIT 1
+    `,
     [fakeid]
   );
   return rows[0] ? mapAccountRow(rows[0]) : undefined;

@@ -100,6 +100,27 @@ export async function getAccountList(begin = 0, keyword = ''): Promise<[AccountI
 }
 
 /**
+ * 通过公众号主页链接解析公众号
+ * @param url
+ */
+export async function getAccountByUrl(url: string): Promise<AccountInfo[]> {
+  const resp = await request<SearchBizResponse & { resolved_name?: string; original_resp?: any }>('/api/public/v1/accountbyurl', {
+    query: {
+      url,
+    },
+  });
+
+  if (resp.base_resp.ret === 0) {
+    return resp.list || [];
+  } else if (resp.base_resp.ret === 200003) {
+    loginAccount.value = null;
+    throw new Error('session expired');
+  } else {
+    throw new Error(`${resp.base_resp.ret}:${resp.base_resp.err_msg}`);
+  }
+}
+
+/**
  * 获取评论
  * @param commentId
  */

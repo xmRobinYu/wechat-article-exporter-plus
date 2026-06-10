@@ -307,6 +307,33 @@ const columnDefs = ref<ColDef[]>([
     initialHide: true,
   },
   {
+    colId: 'detail_article_count',
+    headerName: '文章明细数',
+    field: 'detail_article_count',
+    cellDataType: 'number',
+    filter: 'agNumberColumnFilter',
+    cellClass: 'flex justify-center items-center font-mono',
+    minWidth: 150,
+  },
+  {
+    colId: 'detail_consistency',
+    headerName: '明细状态',
+    valueGetter: params => {
+      const summary = params.data.articles || 0;
+      const detail = params.data.detail_article_count || 0;
+      if (summary === 0 && detail === 0) return '空';
+      if (summary === detail) return '正常';
+      return '需修复';
+    },
+    filter: 'agSetColumnFilter',
+    minWidth: 130,
+    cellClass: params => {
+      const summary = params.data.articles || 0;
+      const detail = params.data.detail_article_count || 0;
+      return summary === detail ? 'flex justify-center items-center text-green-600 font-medium' : 'flex justify-center items-center text-rose-500 font-medium';
+    },
+  },
+  {
     colId: 'load_percent',
     headerName: '同步进度',
     valueGetter: params => (params.data.total_count === 0 ? 0 : params.data.count / params.data.total_count),
@@ -500,6 +527,36 @@ async function clearCheckpointAndFullSync() {
   toast.success('操作完成', `已清空【${account.nickname}】的增量同步停点，并启动全量同步`);
 }
 
+async function repairSelectedAccounts() {
+  if (!checkLogin()) return;
+
+  const rows = getSelectedRows();
+  if (rows.length === 0) {
+    toast.info('提示', '请先选择至少 1 个公众号');
+    return;
+  }
+
+  const targets = rows.filter(account => (account.articles || 0) !== (account.detail_article_count || 0));
+  if (targets.length === 0) {
+    toast.success('无需修复', '当前选中的公众号文章摘要与文章明细一致');
+    return;
+  }
+
+  try {
+    isCanceled.value = false;
+    const previousMode = syncMode.value;
+    syncMode.value = 'full';
+    for (const account of targets) {
+      await loadAccountArticle(account);
+    }
+    syncMode.value = previousMode;
+    await refresh();
+    toast.success('修复完成', `已对 ${targets.length} 个公众号执行全量同步修复文章明细`);
+  } catch (e: any) {
+    toast.error('修复失败', e.message);
+  }
+}
+
 // 导入公众号
 const fileRef = ref<HTMLInputElement | null>(null);
 const importBtnLoading = ref(false);
@@ -621,6 +678,15 @@ const { getActualDateRange } = useSyncDeadline();
           @click="clearCheckpointAndFullSync"
           :ui="{ base: 'shrink-0 whitespace-nowrap' }"
           >清空停点并全量同步</UButton
+        >
+        <UButton
+          color="red"
+          icon="i-lucide:wrench"
+          class="disabled:opacity-35"
+          :disabled="isDeleting || isSyncing || !hasSelectedRows"
+          @click="repairSelectedAccounts"
+          :ui="{ base: 'shrink-0 whitespace-nowrap' }"
+          >修复文章明细</UButton
         >
         <UButton
           color="black"

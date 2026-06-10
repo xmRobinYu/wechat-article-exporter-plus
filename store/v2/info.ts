@@ -6,6 +6,7 @@ export interface MpAccount {
   completed: boolean;
   count: number;
   articles: number;
+  detail_article_count?: number;
 
   // 公众号昵称
   nickname?: string;

@@ -145,11 +145,13 @@ export class Downloader extends BaseDownloader {
   // 下载 HTML 任务
   private async downloadHTMLTask(url: string): Promise<void> {
     this.pending.add(url);
+    console.log(`[DEBUG-html] begin url=${url}`);
 
     // html 下载时，需要检查缓存是否可用，避免重复下载相同 html 内容
     if (!preferences.value.downloadConfig.forceDownloadContent) {
       const cached = await getHtmlCache(url);
       if (cached) {
+        console.log(`[DEBUG-html] cache-hit url=${url}`);
         this.pending.delete(url);
         this.completed.add(url);
         return;
@@ -158,6 +160,7 @@ export class Downloader extends BaseDownloader {
 
     const article = await getArticleByLink(url);
     if (!article) {
+      console.log(`[DEBUG-html] article-missing url=${url}`);
       this.pending.delete(url);
       this.failed.add(url);
       return;
@@ -168,11 +171,13 @@ export class Downloader extends BaseDownloader {
 
     for (let attempt = 0; attempt < this.options.maxRetries; attempt++) {
       const proxy = this.proxyManager.getBestProxy();
+      console.log(`[DEBUG-html] attempt=${attempt + 1} proxy=${proxy} url=${url}`);
 
       try {
         const blob = await this.download(article.fakeid, url, proxy, withCredential);
         const html = await blob.text();
         const [status, commentID] = validateHTMLContent(html);
+        console.log(`[DEBUG-html] result status=${status} commentID=${commentID || ''} url=${url}`);
         if (status === 'Success') {
           // 下载成功
           await updateHtmlCache({
@@ -230,10 +235,14 @@ export class Downloader extends BaseDownloader {
           throwException(`文章(url: ${url} )解析失败`);
         }
       } catch (error) {
+        console.log(
+          `[DEBUG-html] error attempt=${attempt + 1} proxy=${proxy} url=${url} message=${(error as Error)?.message || error}`,
+        );
         await this.handleDownloadFailure(proxy, url, attempt, error);
       }
     }
 
+    console.log(`[DEBUG-html] failed-final url=${url}`);
     this.pending.delete(url);
     this.failed.add(url);
   }
