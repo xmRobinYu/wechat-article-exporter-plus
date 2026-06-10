@@ -57,6 +57,23 @@ async function ensureSchema(db: mysql.Pool): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='公众号元数据表'
   `);
 
+  const [latestSyncedArticleTimeColumn] = await db.query<mysql.RowDataPacket[]>(
+    `
+      SELECT COLUMN_NAME
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'mp_accounts'
+        AND COLUMN_NAME = 'latest_synced_article_time'
+      LIMIT 1
+    `
+  );
+  if (latestSyncedArticleTimeColumn.length === 0) {
+    await db.query(`
+      ALTER TABLE mp_accounts
+        ADD COLUMN latest_synced_article_time INT NULL COMMENT '增量同步停点：当前已同步到的最新文章发布时间戳（秒）' AFTER last_update_time
+    `);
+  }
+
   await db.query(`
     CREATE TABLE IF NOT EXISTS mp_articles (
       id VARCHAR(160) NOT NULL PRIMARY KEY COMMENT '主键，格式为 fakeid:aid',

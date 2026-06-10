@@ -568,7 +568,7 @@ const { getActualDateRange } = useSyncDeadline();
 
     <div class="flex flex-col h-full divide-y divide-gray-200">
       <!-- 顶部操作区 -->
-      <header class="flex items-stretch gap-3 px-3 py-3">
+      <header class="flex flex-wrap items-center gap-3 px-3 py-3">
         <UButton icon="i-lucide:user-plus" color="blue" :disabled="isDeleting || addBtnLoading" @click="addAccount">
           {{ addBtnLoading ? '添加中...' : '添加' }}
         </UButton>
@@ -592,6 +592,7 @@ const { getActualDateRange } = useSyncDeadline();
           :loading="isDeleting"
           :disabled="!hasSelectedRows"
           @click="deleteSelectedAccounts"
+          :ui="{ base: 'shrink-0 whitespace-nowrap' }"
           >删除</UButton
         >
         <UButton
@@ -600,6 +601,7 @@ const { getActualDateRange } = useSyncDeadline();
           class="disabled:opacity-35"
           :disabled="isDeleting || !hasSelectedRows"
           @click="openSetIncrementalCheckpoint"
+          :ui="{ base: 'shrink-0 whitespace-nowrap' }"
           >设置增量停点</UButton
         >
         <UButton
@@ -608,6 +610,7 @@ const { getActualDateRange } = useSyncDeadline();
           class="disabled:opacity-35"
           :disabled="isDeleting || isSyncing || !hasSelectedRows"
           @click="setCheckpointToNow"
+          :ui="{ base: 'shrink-0 whitespace-nowrap' }"
           >从最新开始同步</UButton
         >
         <UButton
@@ -616,6 +619,7 @@ const { getActualDateRange } = useSyncDeadline();
           class="disabled:opacity-35"
           :disabled="isDeleting || isSyncing || !hasSelectedRows"
           @click="clearCheckpointAndFullSync"
+          :ui="{ base: 'shrink-0 whitespace-nowrap' }"
           >清空停点并全量同步</UButton
         >
         <UButton
@@ -625,11 +629,12 @@ const { getActualDateRange } = useSyncDeadline();
           :loading="isSyncing"
           :disabled="isDeleting || !hasSelectedRows"
           @click="loadSelectedAccountArticle"
+          :ui="{ base: 'shrink-0 whitespace-nowrap' }"
           >同步</UButton
         >
         <USelectMenu
           v-model="syncMode"
-          class="w-32"
+          class="w-32 shrink-0"
           :options="[
             { label: '仅新增', value: 'incremental' },
             { label: '全量', value: 'full' },
@@ -637,8 +642,8 @@ const { getActualDateRange } = useSyncDeadline();
           value-attribute="value"
           option-attribute="label"
         />
-        <div class="hidden xl:flex flex-1 justify-end">
-          <span class="self-end text-sm text-blue-500 font-medium">
+        <div class="hidden xl:flex flex-1 min-w-[320px] justify-end">
+          <span class="self-end text-right text-sm text-blue-500 font-medium">
             同步模式: {{ syncMode === 'incremental' ? '仅新增' : '全量' }} ｜ 同步范围: {{ getActualDateRange() }}
           </span>
         </div>
