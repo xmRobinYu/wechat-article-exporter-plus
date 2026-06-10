@@ -8,6 +8,7 @@ import type { LogoutResponse } from '~/types/types';
 
 const loginAccount = useLoginAccount();
 const modal = useModal();
+const { refreshLoginStatus } = useLoginStatus();
 
 const now = ref(new Date());
 const distance = computed(() => {
@@ -78,14 +79,24 @@ function login() {
 const logoutBtnLoading = ref(false);
 
 async function logout() {
-  logoutBtnLoading.value = true;
-  const { statusCode, statusText } = await request<LogoutResponse>('/api/web/mp/logout');
-  if (statusCode === 200) {
-    loginAccount.value = null;
-  } else {
+  try {
+    logoutBtnLoading.value = true;
+    const { statusCode, statusText } = await request<LogoutResponse>('/api/web/mp/logout');
+    if (statusCode === 200) {
+      loginAccount.value = null;
+      return;
+    }
+
+    if (statusCode === 401) {
+      loginAccount.value = null;
+      modal.open(LoginModal);
+      return;
+    }
+
     alert(statusText);
+  } finally {
+    logoutBtnLoading.value = false;
   }
-  logoutBtnLoading.value = false;
 }
 
 let timer: number;
@@ -93,6 +104,10 @@ onMounted(() => {
   timer = window.setInterval(() => {
     now.value = new Date();
   }, 1000);
+
+  refreshLoginStatus().catch(error => {
+    console.warn('初始化登录态校验失败:', error);
+  });
 });
 onUnmounted(() => {
   window.clearInterval(timer);

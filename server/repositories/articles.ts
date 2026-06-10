@@ -1,5 +1,6 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import type { AppMsgExWithFakeID } from '~/types/types';
+import { upsertAccount } from '~/server/repositories/accounts';
 import { getMysqlPool } from '~/server/utils/mysql';
 
 interface ArticleRow extends RowDataPacket {
@@ -72,6 +73,15 @@ export async function upsertArticles(articles: AppMsgExWithFakeID[]): Promise<nu
   const db = await getMysqlPool();
   let inserted = 0;
   for (const article of articles) {
+    await upsertAccount({
+      fakeid: article.fakeid,
+      completed: false,
+      count: 0,
+      articles: 0,
+      total_count: 0,
+      nickname: article.fakeid === 'SINGLE_ARTICLE_FAKEID' ? '单篇文章下载' : undefined,
+      latest_synced_article_time: article.update_time || article.create_time || undefined,
+    });
     const [result] = await db.query<ResultSetHeader>(
       `
         INSERT INTO mp_articles (

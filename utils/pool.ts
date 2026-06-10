@@ -3,6 +3,7 @@ import PQueue from 'p-queue';
 import { v4 as uuid } from 'uuid';
 import { sleep } from '#shared/utils/helpers';
 import { PUBLIC_PROXY_LIST } from '~/config/public-proxy';
+import type { Preferences } from '~/types/preferences';
 import type { DownloadableArticle } from '~/types/types';
 import type { AudioResource, VideoResource } from '~/types/video';
 
@@ -288,7 +289,8 @@ export async function downloads<T extends DownloadResource>(
   // 检查是否设置了私有代理地址
   const privateProxy: string[] = [];
   try {
-    const proxy = JSON.parse(window.localStorage.getItem('wechat-proxy')!);
+    const preferences = JSON.parse(window.localStorage.getItem('preferences') || '{}') as Partial<Preferences>;
+    const proxy = preferences.privateProxyList || [];
     if (Array.isArray(proxy) && proxy.length > 0) {
       privateProxy.push(...proxy);
     }
@@ -297,7 +299,7 @@ export async function downloads<T extends DownloadResource>(
   }
 
   // 初始化 pool
-  pool.init(privateProxy);
+  pool.init(privateProxy.length > 0 ? privateProxy : PUBLIC_PROXY_LIST);
 
   const queue = new PQueue({ concurrency: pool.proxies.length });
 

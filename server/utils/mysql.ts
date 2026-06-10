@@ -1,4 +1,7 @@
+import { config as loadEnv } from 'dotenv';
 import mysql from 'mysql2/promise';
+
+loadEnv();
 
 let pool: mysql.Pool | null = null;
 let initPromise: Promise<void> | null = null;

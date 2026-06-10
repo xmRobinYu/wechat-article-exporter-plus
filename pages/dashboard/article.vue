@@ -647,12 +647,8 @@ function clearColumnFilters() {
           <ButtonGroup
             :items="[
               { label: '文章内容', event: 'download-article-html' },
-              { label: '阅读量 (需要Credential)', event: 'download-article-metadata' },
-              { label: '留言内容 (需要Credential)', event: 'download-article-comment' },
             ]"
             @download-article-html="download('html', activeArticleUrls)"
-            @download-article-metadata="download('metadata', activeArticleUrls)"
-            @download-article-comment="download('comment', activeArticleUrls)"
           >
             <UButton
               :loading="downloadBtnLoading"
