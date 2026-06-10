@@ -1,3 +1,4 @@
+import { request } from '#shared/utils/request';
 import { db } from './db';
 
 export interface MpAccount {
@@ -18,6 +19,9 @@ export interface MpAccount {
 
   // 最后更新时间
   last_update_time?: number;
+
+  // 当前已同步到的最新文章发布时间
+  latest_synced_article_time?: number;
 }
 
 /**
@@ -25,7 +29,7 @@ export interface MpAccount {
  * @param mpAccount
  */
 export async function updateInfoCache(mpAccount: MpAccount): Promise<boolean> {
-  return db.transaction('rw', 'info', async () => {
+  const result = await db.transaction('rw', 'info', async () => {
     let infoCache = await db.info.get(mpAccount.fakeid);
     if (infoCache) {
       if (mpAccount.completed) {
@@ -36,6 +40,12 @@ export async function updateInfoCache(mpAccount: MpAccount): Promise<boolean> {
       infoCache.nickname = mpAccount.nickname;
       infoCache.round_head_img = mpAccount.round_head_img;
       infoCache.total_count = mpAccount.total_count;
+      if (mpAccount.latest_synced_article_time) {
+        infoCache.latest_synced_article_time = Math.max(
+          infoCache.latest_synced_article_time || 0,
+          mpAccount.latest_synced_article_time
+        );
+      }
       infoCache.update_time = Math.round(Date.now() / 1000);
     } else {
       infoCache = {
@@ -48,15 +58,24 @@ export async function updateInfoCache(mpAccount: MpAccount): Promise<boolean> {
         total_count: mpAccount.total_count,
         create_time: Math.round(Date.now() / 1000),
         update_time: Math.round(Date.now() / 1000),
+        latest_synced_article_time: mpAccount.latest_synced_article_time,
       };
     }
     db.info.put(infoCache);
     return true;
   });
+  const latest = await db.info.get(mpAccount.fakeid);
+  if (latest) {
+    await request('/api/internal/accounts/upsert', {
+      method: 'POST',
+      body: latest,
+    });
+  }
+  return result;
 }
 
 export async function updateLastUpdateTime(fakeid: string): Promise<boolean> {
-  return db.transaction('rw', 'info', async () => {
+  const result = await db.transaction('rw', 'info', async () => {
     let infoCache = await db.info.get(fakeid);
     if (infoCache) {
       infoCache.last_update_time = Math.round(Date.now() / 1000);
@@ -64,6 +83,56 @@ export async function updateLastUpdateTime(fakeid: string): Promise<boolean> {
     }
     return true;
   });
+  const latest = await db.info.get(fakeid);
+  if (latest) {
+    await request('/api/internal/accounts/upsert', {
+      method: 'POST',
+      body: latest,
+    });
+  }
+  return result;
+}
+
+export async function updateLatestSyncedArticleTime(fakeid: string, latestArticleTime: number): Promise<boolean> {
+  const result = await db.transaction('rw', 'info', async () => {
+    const infoCache = await db.info.get(fakeid);
+    if (infoCache) {
+      infoCache.latest_synced_article_time = Math.max(infoCache.latest_synced_article_time || 0, latestArticleTime);
+      infoCache.update_time = Math.round(Date.now() / 1000);
+      db.info.put(infoCache);
+      return true;
+    }
+    return false;
+  });
+  const latest = await db.info.get(fakeid);
+  if (latest) {
+    await request('/api/internal/accounts/upsert', {
+      method: 'POST',
+      body: latest,
+    });
+  }
+  return result;
+}
+
+export async function setLatestSyncedArticleTime(fakeid: string, latestArticleTime?: number): Promise<boolean> {
+  const result = await db.transaction('rw', 'info', async () => {
+    const infoCache = await db.info.get(fakeid);
+    if (infoCache) {
+      infoCache.latest_synced_article_time = latestArticleTime;
+      infoCache.update_time = Math.round(Date.now() / 1000);
+      db.info.put(infoCache);
+      return true;
+    }
+    return false;
+  });
+  const latest = await db.info.get(fakeid);
+  if (latest) {
+    await request('/api/internal/accounts/upsert', {
+      method: 'POST',
+      body: latest,
+    });
+  }
+  return result;
 }
 
 /**
@@ -71,11 +140,24 @@ export async function updateLastUpdateTime(fakeid: string): Promise<boolean> {
  * @param fakeid
  */
 export async function getInfoCache(fakeid: string): Promise<MpAccount | undefined> {
-  return db.info.get(fakeid);
+  const local = await db.info.get(fakeid);
+  if (local) {
+    return local;
+  }
+  const remote = await request<MpAccount | undefined>(`/api/internal/accounts/${encodeURIComponent(fakeid)}`);
+  if (remote) {
+    await db.info.put(remote);
+  }
+  return remote;
 }
 
 export async function getAllInfo(): Promise<MpAccount[]> {
-  return db.info.toArray();
+  const remote = await request<MpAccount[]>('/api/internal/accounts');
+  await db.info.clear();
+  if (remote.length > 0) {
+    await db.info.bulkPut(remote);
+  }
+  return remote;
 }
 
 // 获取公众号的名称
@@ -99,6 +181,7 @@ export async function importMpAccounts(mpAccounts: MpAccount[]): Promise<void> {
     mpAccount.create_time = undefined;
     mpAccount.update_time = undefined;
     mpAccount.last_update_time = undefined;
+    mpAccount.latest_synced_article_time = undefined;
     await updateInfoCache(mpAccount);
   }
 }

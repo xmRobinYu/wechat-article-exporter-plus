@@ -20,6 +20,7 @@ import GridAlbum from '~/components/grid/Album.vue';
 import GridArticleActions from '~/components/grid/ArticleActions.vue';
 import GridCoverTooltip from '~/components/grid/CoverTooltip.vue';
 import GridStatusBar from '~/components/grid/StatusBar.vue';
+import BaseDatePicker from '~/components/base/DatePicker.vue';
 import AccountSelectorForArticle from '~/components/selector/AccountSelectorForArticle.vue';
 import { isDev, websiteName } from '~/config';
 import { sharedGridOptions } from '~/config/shared-grid-options';
@@ -52,6 +53,10 @@ interface Article extends AppMsgExWithFakeID, Partial<ArticleMetadata> {
 }
 
 let globalRowData: Article[] = [];
+let allArticleRowData: Article[] = [];
+const displayedArticles = shallowRef<Article[]>([]);
+const publishDateStart = ref<number | null>(null);
+const publishDateEnd = ref<number | null>(null);
 
 const columnDefs = ref<ColDef[]>([
   {
@@ -320,6 +325,7 @@ function onGridReady(params: GridReadyEvent) {
   gridApi.value = params.api;
 
   restoreColumnState();
+  refreshDisplayedArticles();
 }
 
 function onColumnStateChange() {
@@ -345,6 +351,7 @@ function restoreColumnState() {
 
 function onFilterChanged(event: FilterChangedEvent) {
   event.api.deselectAll();
+  refreshDisplayedArticles();
 }
 
 const preferences = usePreferences();
@@ -364,6 +371,44 @@ const selectedAccount = ref<MpAccount | undefined>();
 watch(selectedAccount, newVal => {
   switchTableData(newVal!.fakeid).catch(() => {});
 });
+
+watch([publishDateStart, publishDateEnd, hideDeleted], () => {
+  applyArticleFilters();
+});
+
+function applyArticleFilters() {
+  const start = publishDateStart.value || null;
+  const end = publishDateEnd.value || null;
+  const filtered = allArticleRowData.filter(article => {
+    if (hideDeleted.value && article.is_deleted) {
+      return false;
+    }
+    if (start && article.update_time < start) {
+      return false;
+    }
+    if (end && article.update_time > end + 24 * 60 * 60 - 1) {
+      return false;
+    }
+    return true;
+  });
+  globalRowData = filtered;
+  gridApi.value?.setGridOption('rowData', globalRowData);
+  refreshDisplayedArticles();
+}
+
+function refreshDisplayedArticles() {
+  if (!gridApi.value) {
+    displayedArticles.value = globalRowData;
+    return;
+  }
+  const rows: Article[] = [];
+  gridApi.value.forEachNodeAfterFilterAndSort(node => {
+    if (node.data) {
+      rows.push(node.data as Article);
+    }
+  });
+  displayedArticles.value = rows;
+}
 
 async function switchTableData(fakeid: string) {
   loading.value = true;
@@ -389,8 +434,8 @@ async function switchTableData(fakeid: string) {
     }
   }
   await sleep(200);
-  globalRowData = articles.filter(article => (hideDeleted.value ? !article.is_deleted : true));
-  gridApi.value?.setGridOption('rowData', globalRowData);
+  allArticleRowData = articles;
+  applyArticleFilters();
   loading.value = false;
 }
 
@@ -408,8 +453,20 @@ function onSelectionChanged(event: SelectionChangedEvent) {
 const selectedArticleUrls = computed(() => {
   return selectedArticles.value.map(article => article.link);
 });
+const activeArticles = computed(() => {
+  return selectedArticles.value.length > 0 ? selectedArticles.value : displayedArticles.value;
+});
+const activeArticleUrls = computed(() => {
+  return activeArticles.value.map(article => article.link);
+});
 const contentNotDownloadedCount = computed(() => {
-  return selectedArticles.value.filter(article => !article.contentDownload).length;
+  return activeArticles.value.filter(article => !article.contentDownload).length;
+});
+const actionScopeLabel = computed(() => {
+  if (selectedArticles.value.length > 0) {
+    return `当前操作范围: 已选 ${selectedArticles.value.length} 篇`;
+  }
+  return `当前操作范围: 筛选结果 ${globalRowData.length} 篇`;
 });
 
 const {
@@ -520,6 +577,33 @@ function copyWechatLink() {
     copied.value = false;
   }, 1000);
 }
+
+function formatFilterDate(ts: number | null) {
+  return ts ? formatTimeStamp(ts).slice(0, 10) : '请选择日期';
+}
+
+function clearPublishDateFilter() {
+  publishDateStart.value = null;
+  publishDateEnd.value = null;
+}
+
+const publishDateFilterLabel = computed(() => {
+  if (!publishDateStart.value && !publishDateEnd.value) {
+    return '当前发布时间筛选: 全部';
+  }
+  return `当前发布时间筛选: ${formatFilterDate(publishDateStart.value)} ~ ${formatFilterDate(publishDateEnd.value)}`;
+});
+
+function selectDisplayedArticles() {
+  gridApi.value?.forEachNodeAfterFilterAndSort(node => {
+    node.setSelected(true);
+  });
+}
+
+function clearColumnFilters() {
+  gridApi.value?.setFilterModel(null);
+  refreshDisplayedArticles();
+}
 </script>
 
 <template>
@@ -535,6 +619,28 @@ function copyWechatLink() {
           <div class="flex space-x-3">
             <AccountSelectorForArticle v-model="selectedAccount" class="w-80" />
           </div>
+          <div class="flex flex-wrap gap-2">
+            <UPopover :popper="{ placement: 'bottom-start' }">
+              <UButton color="gray" icon="i-heroicons-calendar-days-20-solid" :label="`开始: ${formatFilterDate(publishDateStart)}`" />
+              <template #panel="{ close }">
+                <BaseDatePicker v-model="publishDateStart" @close="close" />
+              </template>
+            </UPopover>
+            <UPopover :popper="{ placement: 'bottom-start' }">
+              <UButton color="gray" icon="i-heroicons-calendar-days-20-solid" :label="`结束: ${formatFilterDate(publishDateEnd)}`" />
+              <template #panel="{ close }">
+                <BaseDatePicker v-model="publishDateEnd" @close="close" />
+              </template>
+            </UPopover>
+            <UButton color="white" icon="i-lucide:eraser" @click="clearPublishDateFilter">清空发布时间筛选</UButton>
+            <UButton color="white" icon="i-lucide:filter-x" @click="clearColumnFilters">清空表头筛选</UButton>
+          </div>
+          <div class="flex items-center">
+            <span class="text-sm text-blue-500 font-medium">{{ publishDateFilterLabel }}</span>
+          </div>
+          <div class="flex items-center">
+            <span class="text-xs text-amber-600 font-medium">{{ actionScopeLabel }}</span>
+          </div>
         </div>
         <div class="flex items-center space-x-2">
           <UButton v-if="downloadBtnLoading" color="black" @click="stopDownload">停止</UButton>
@@ -544,13 +650,13 @@ function copyWechatLink() {
               { label: '阅读量 (需要Credential)', event: 'download-article-metadata' },
               { label: '留言内容 (需要Credential)', event: 'download-article-comment' },
             ]"
-            @download-article-html="download('html', selectedArticleUrls)"
-            @download-article-metadata="download('metadata', selectedArticleUrls)"
-            @download-article-comment="download('comment', selectedArticleUrls)"
+            @download-article-html="download('html', activeArticleUrls)"
+            @download-article-metadata="download('metadata', activeArticleUrls)"
+            @download-article-comment="download('comment', activeArticleUrls)"
           >
             <UButton
               :loading="downloadBtnLoading"
-              :disabled="!selectedAccount"
+              :disabled="!selectedAccount || activeArticleUrls.length === 0"
               color="white"
               class="font-mono"
               :label="downloadBtnLoading ? `抓取中 ${downloadCompletedCount}/${downloadTotalCount}` : '抓取'"
@@ -568,17 +674,17 @@ function copyWechatLink() {
               { label: 'Word (内测中)', event: 'export-article-word' },
               { label: 'PDF (内测中)', event: 'export-article-pdf' },
             ]"
-            @export-article-excel="exportFile('excel', selectedArticleUrls)"
-            @export-article-json="exportFile('json', selectedArticleUrls)"
-            @export-article-html="exportFile('html', selectedArticleUrls, contentNotDownloadedCount)"
-            @export-article-text="exportFile('text', selectedArticleUrls, contentNotDownloadedCount)"
-            @export-article-markdown="exportFile('markdown', selectedArticleUrls, contentNotDownloadedCount)"
-            @export-article-word="exportFile('word', selectedArticleUrls, contentNotDownloadedCount)"
-            @export-article-pdf="exportFile('pdf', selectedArticleUrls, contentNotDownloadedCount)"
+            @export-article-excel="exportFile('excel', activeArticleUrls)"
+            @export-article-json="exportFile('json', activeArticleUrls)"
+            @export-article-html="exportFile('html', activeArticleUrls, contentNotDownloadedCount)"
+            @export-article-text="exportFile('text', activeArticleUrls, contentNotDownloadedCount)"
+            @export-article-markdown="exportFile('markdown', activeArticleUrls, contentNotDownloadedCount)"
+            @export-article-word="exportFile('word', activeArticleUrls, contentNotDownloadedCount)"
+            @export-article-pdf="exportFile('pdf', activeArticleUrls, contentNotDownloadedCount)"
           >
             <UButton
               :loading="exportBtnLoading"
-              :disabled="!selectedAccount"
+              :disabled="!selectedAccount || activeArticleUrls.length === 0"
               color="white"
               class="font-mono"
               :label="exportBtnLoading ? `${exportPhase} ${exportCompletedCount}/${exportTotalCount}` : '导出'"
@@ -586,6 +692,13 @@ function copyWechatLink() {
             />
           </ButtonGroup>
 
+          <UButton
+            :disabled="!selectedAccount || displayedArticles.length === 0"
+            color="gray"
+            icon="i-lucide:list-checks"
+            label="全选当前筛选结果"
+            @click="selectDisplayedArticles"
+          />
           <UButton
             :disabled="!selectedAccount"
             :icon="copied ? 'i-lucide:check' : 'i-heroicons-link-16-solid'"

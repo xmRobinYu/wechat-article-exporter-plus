@@ -16,6 +16,7 @@ import dayjs from 'dayjs';
 import { defu } from 'defu';
 import { onMounted } from 'vue';
 import { formatTimeStamp } from '#shared/utils/helpers';
+import { request } from '#shared/utils/request';
 import GridArticleActions from '~/components/grid/ArticleActions.vue';
 import GridLoading from '~/components/grid/Loading.vue';
 import GridNoRows from '~/components/grid/NoRows.vue';
@@ -23,12 +24,12 @@ import PreviewArticle from '~/components/preview/Article.vue';
 import toastFactory from '~/composables/toast';
 import { websiteName } from '~/config';
 import { sharedGridOptions } from '~/config/shared-grid-options';
-import { articleDeleted, updateArticleFakeid, updateArticleStatus } from '~/store/v2/article';
+import { articleDeleted, persistArticles, updateArticleFakeid, updateArticleStatus } from '~/store/v2/article';
 import { db } from '~/store/v2/db';
 import { getHtmlCache } from '~/store/v2/html';
 import type { Metadata } from '~/store/v2/metadata';
-import type { Preferences } from '~/types/preferences';
 import type { AppMsgExWithFakeID } from '~/types/types';
+import type { Preferences } from '~/types/preferences';
 import type { ArticleMetadata } from '~/utils/download/types';
 import { createBooleanColumnFilterParams, createDateColumnFilterParams } from '~/utils/grid';
 
@@ -301,6 +302,32 @@ function createRow(url: string): SingleArticleRow {
   };
 }
 
+function createRowFromArticle(article: AppMsgExWithFakeID): SingleArticleRow {
+  const generatedId =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random()}`;
+  return {
+    id: generatedId,
+    fakeid: article.fakeid,
+    link: article.link,
+    title: article.title || '未命名文章',
+    author_name: article.author_name || '--',
+    digest: article.digest || '',
+    cover: article.cover || article.cover_img || '',
+    create_time: article.create_time,
+    update_time: article.update_time,
+    appmsgid: article.appmsgid,
+    itemidx: article.itemidx,
+    aid: article.aid,
+    contentDownload: false,
+    commentDownload: false,
+    accountName: null,
+    _status: article._status || '',
+    is_deleted: Boolean(article.is_deleted),
+  };
+}
+
 async function addArticle() {
   try {
     const normalized = normalizeUrl(inputUrl.value);
@@ -308,7 +335,10 @@ async function addArticle() {
       toast.info('提示', '该链接已存在列表中');
       return;
     }
-    const row = createRow(normalized);
+    const existingArticle = await request<AppMsgExWithFakeID | null>(
+      `/api/internal/articles/link?url=${encodeURIComponent(normalized)}`
+    );
+    const row = existingArticle ? createRowFromArticle(existingArticle) : createRow(normalized);
     globalRowData.value = [row, ...globalRowData.value];
     await upsertArticleStub(row);
     refreshGrid();
@@ -356,7 +386,7 @@ function buildVirtualArticle(row: SingleArticleRow): AppMsgExWithFakeID {
 }
 
 function upsertArticleStub(row: SingleArticleRow) {
-  return db.article.put(buildVirtualArticle(row), `${row.fakeid}:${row.aid}`);
+  return persistArticles([buildVirtualArticle(row)]);
 }
 
 function getSelectedRows(): SingleArticleRow[] {
@@ -524,7 +554,7 @@ async function updateRowFromHtml(row: SingleArticleRow) {
     }
   }
 
-  await db.article.put(
+  await persistArticles([
     {
       ...buildVirtualArticle(row),
       digest: row.digest,
@@ -535,8 +565,7 @@ async function updateRowFromHtml(row: SingleArticleRow) {
       pic_cdn_url_16_9: cover,
       pic_cdn_url_235_1: cover,
     },
-    `${row.fakeid}:${row.aid}`
-  );
+  ]);
 }
 
 function previewRow(row: SingleArticleRow) {
@@ -561,6 +590,12 @@ async function deleteRowData(row: SingleArticleRow) {
   await db.transaction('rw', ['article', 'html'], async () => {
     await db.article.delete(key);
     await db.html.delete(row.link);
+  });
+  await request('/api/internal/articles/delete', {
+    method: 'POST',
+    body: {
+      url: row.link,
+    },
   });
 }
 

@@ -39,9 +39,32 @@ yarn docker:publish
 
 1. 用户通过微信公众平台后台扫码登录认证
 2. `apis/index.ts` 定义客户端 API 函数，调用 Nitro 代理端点
-3. 文章数据获取后经过过滤，通过 Dexie 缓存到 IndexedDB（`store/v2/db.ts`）
-4. 下载调度：`utils/download/Downloader.ts` 使用 `p-queue` 管理并发下载
-5. 导出：`utils/download/Exporter.ts` 将文章转换为目标格式（Cheerio 处理 HTML、Turndown 转 Markdown、ExcelJS 生成表格、JSZip 打包）
+3. 公众号与文章元数据会同步写入 MySQL（账号、文章清单、增量同步停点、登录态）
+4. 文章数据获取后仍会镜像缓存到 Dexie / IndexedDB（`store/v2/db.ts`），用于前端快速读取
+5. 下载调度：`utils/download/Downloader.ts` 使用 `p-queue` 管理并发下载
+6. 导出：`utils/download/Exporter.ts` 将文章转换为目标格式（Cheerio 处理 HTML、Turndown 转 Markdown、ExcelJS 生成表格、JSZip 打包）
+
+### 增量同步规则
+
+- `mp_accounts.latest_synced_article_time` 表示“增量同步停点”
+- `仅新增` 模式下：
+  - 同步公众号时遇到早于该停点的文章，会停止继续向历史翻页
+- `全量` 模式下：
+  - 临时忽略该停点，重新同步历史文章
+- 公众号管理页支持人工设置：
+  - 设置增量停点
+  - 从最新开始同步
+  - 清空停点并全量同步
+
+### 抓取 / 导出范围规则
+
+- 文章下载页支持两层筛选：
+  - 顶部发布时间范围筛选
+  - AG Grid 表头筛选
+- 抓取 / 导出动作的作用范围：
+  - 如果用户手动选中了文章，则仅作用于选中项
+  - 如果没有选中，则默认作用于当前筛选结果
+- 文章正文、图片、资源、评论正文等大内容仍不写入 MySQL，只保留在本地缓存
 
 ### 关键目录
 
@@ -74,3 +97,4 @@ Nuxt UI v2 + TailwindCSS 提供组件和样式。AG Grid Enterprise 用于文章
 - `NITRO_KV_BASE` — KV 数据目录（默认：`.data/kv`）
 - `NUXT_DEBUG_MP_REQUEST` — 开启微信代理请求调试（仅开发环境）
 - `DEBUG_KEY` — 调试端点认证密钥
+- `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` — MySQL 元数据持久化配置

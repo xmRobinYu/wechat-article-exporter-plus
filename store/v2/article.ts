@@ -1,8 +1,22 @@
+import { request } from '#shared/utils/request';
 import type { AppMsgExWithFakeID, PublishInfo, PublishPage } from '~/types/types';
 import { db } from './db';
-import { type MpAccount, updateInfoCache } from './info';
+import { type MpAccount, updateInfoCache, updateLatestSyncedArticleTime } from './info';
 
 export type ArticleAsset = AppMsgExWithFakeID;
+
+export async function persistArticles(articles: AppMsgExWithFakeID[]): Promise<void> {
+  if (articles.length === 0) return;
+  for (const article of articles) {
+    await db.article.put(article, `${article.fakeid}:${article.aid}`);
+  }
+  await request('/api/internal/articles/upsert', {
+    method: 'POST',
+    body: {
+      articles,
+    },
+  });
+}
 
 /**
  * 更新文章缓存
@@ -10,12 +24,19 @@ export type ArticleAsset = AppMsgExWithFakeID;
  * @param publish_page
  */
 export async function updateArticleCache(account: MpAccount, publish_page: PublishPage) {
+  const publish_list = publish_page.publish_list.filter(item => !!item.publish_info);
+  const latestArticleTime = publish_list
+    .flatMap(item => {
+      const publish_info: PublishInfo = JSON.parse(item.publish_info);
+      return publish_info.appmsgex.map(article => article.update_time || article.create_time || 0);
+    })
+    .reduce((max, current) => Math.max(max, current), 0);
+
   await db.transaction('rw', ['article', 'info'], async () => {
     const keys = await db.article.toCollection().keys();
 
     const fakeid = account.fakeid;
     const total_count = publish_page.total_count;
-    const publish_list = publish_page.publish_list.filter(item => !!item.publish_info);
 
     // 统计本次缓存成功新增的数量
     let msgCount = 0;
@@ -47,8 +68,20 @@ export async function updateArticleCache(account: MpAccount, publish_page: Publi
       nickname: account.nickname,
       round_head_img: account.round_head_img,
       total_count: total_count,
+      latest_synced_article_time: latestArticleTime || undefined,
     });
   });
+
+  if (latestArticleTime > 0) {
+    await updateLatestSyncedArticleTime(account.fakeid, latestArticleTime);
+  }
+
+  const fakeid = account.fakeid;
+  const remoteArticles = publish_list.flatMap(item => {
+    const publish_info: PublishInfo = JSON.parse(item.publish_info);
+    return publish_info.appmsgex.map(article => ({ ...article, fakeid, _status: '' }));
+  });
+  await persistArticles(remoteArticles);
 }
 
 /**
@@ -57,12 +90,14 @@ export async function updateArticleCache(account: MpAccount, publish_page: Publi
  * @param create_time 创建时间
  */
 export async function hitCache(fakeid: string, create_time: number): Promise<boolean> {
-  const count = await db.article
-    .where('fakeid')
-    .equals(fakeid)
-    .and(article => article.create_time < create_time)
-    .count();
-  return count > 0;
+  const count = await db.article.where('fakeid').equals(fakeid).and(article => article.create_time < create_time).count();
+  if (count > 0) {
+    return true;
+  }
+  const resp = await request<{ hit: boolean }>(
+    `/api/internal/articles/before?fakeid=${encodeURIComponent(fakeid)}&create_time=${create_time}&mode=hit`
+  );
+  return resp.hit;
 }
 
 /**
@@ -71,12 +106,24 @@ export async function hitCache(fakeid: string, create_time: number): Promise<boo
  * @param create_time 创建时间
  */
 export async function getArticleCache(fakeid: string, create_time: number): Promise<AppMsgExWithFakeID[]> {
-  return db.article
+  const local = await db.article
     .where('fakeid')
     .equals(fakeid)
     .and(article => article.create_time < create_time)
     .reverse()
     .sortBy('create_time');
+  if (local.length > 0) {
+    return local;
+  }
+  const remote = await request<AppMsgExWithFakeID[]>(
+    `/api/internal/articles/before?fakeid=${encodeURIComponent(fakeid)}&create_time=${create_time}`
+  );
+  if (remote.length > 0) {
+    for (const article of remote) {
+      await db.article.put(article, `${article.fakeid}:${article.aid}`);
+    }
+  }
+  return remote;
 }
 
 /**
@@ -85,10 +132,15 @@ export async function getArticleCache(fakeid: string, create_time: number): Prom
  */
 export async function getArticleByLink(url: string): Promise<AppMsgExWithFakeID> {
   const article = await db.article.where('link').equals(url).first();
-  if (!article) {
+  if (article) {
+    return article;
+  }
+  const remote = await request<AppMsgExWithFakeID | null>(`/api/internal/articles/link?url=${encodeURIComponent(url)}`);
+  if (!remote) {
     throw new Error(`Article(${url}) does not exist`);
   }
-  return article;
+  await db.article.put(remote, `${remote.fakeid}:${remote.aid}`);
+  return remote;
 }
 
 // 根据 url 获取 SINGLE_ARTICLE_FAKEID 文章对象
@@ -98,11 +150,17 @@ export async function getSingleArticleByLink(url: string): Promise<AppMsgExWithF
     .equals(url)
     .and(article => article.fakeid === 'SINGLE_ARTICLE_FAKEID')
     .first();
-  if (!article) {
+  if (article) {
+    return article;
+  }
+  const remote = await request<AppMsgExWithFakeID | null>(
+    `/api/internal/articles/link?url=${encodeURIComponent(url)}&single=true`
+  );
+  if (!remote) {
     throw new Error(`Article(${url}) does not exist`);
   }
-
-  return article;
+  await db.article.put(remote, `${remote.fakeid}:${remote.aid}`);
+  return remote;
 }
 
 /**
@@ -119,6 +177,15 @@ export async function articleDeleted(url: string, is_deleted = true): Promise<vo
         article.is_deleted = is_deleted;
       });
   });
+  await request('/api/internal/articles/patch', {
+    method: 'POST',
+    body: {
+      url,
+      patch: {
+        is_deleted,
+      },
+    },
+  });
 }
 
 /**
@@ -134,6 +201,15 @@ export async function updateArticleStatus(url: string, status: string): Promise<
       .modify(article => {
         article._status = status;
       });
+  });
+  await request('/api/internal/articles/patch', {
+    method: 'POST',
+    body: {
+      url,
+      patch: {
+        _status: status,
+      },
+    },
   });
 }
 
@@ -154,5 +230,15 @@ export async function updateArticleFakeid(url: string, fakeid: string): Promise<
         // 标记改数据是【单篇文章下载】添加的
         article._single = true;
       });
+  });
+  await request('/api/internal/articles/patch', {
+    method: 'POST',
+    body: {
+      url,
+      patch: {
+        fakeid,
+        _single: true,
+      },
+    },
   });
 }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ICellRendererParams } from 'ag-grid-community';
 import { Loader } from 'lucide-vue-next';
+import { formatTimeStamp } from '#shared/utils/helpers';
 
 interface Props {
   params: ICellRendererParams & {
@@ -21,11 +22,18 @@ function stop() {
 }
 const isDisabled = computed(() => props.params.isDeleting || props.params.isSyncing);
 const isLoading = computed(() => props.params.isSyncing && props.params.node.id === props.params.syncingRowId);
+const checkpointLabel = computed(() => {
+  const value = props.params.data?.latest_synced_article_time;
+  if (!value) {
+    return '未设置增量停点';
+  }
+  return `增量停点: ${formatTimeStamp(value)}`;
+});
 </script>
 
 <template>
   <div class="flex items-center justify-center gap-3">
-    <UButton v-if="isLoading" color="green" size="xs" variant="solid" @click="stop">
+    <UButton v-if="isLoading" color="green" size="xs" variant="solid" :title="checkpointLabel" @click="stop">
       <Loader :size="14" class="animate-spin" />
       停止</UButton
     >
@@ -34,6 +42,7 @@ const isLoading = computed(() => props.params.isSyncing && props.params.node.id 
       icon="i-heroicons:arrow-path-rounded-square-20-solid"
       color="blue"
       size="xs"
+      :title="checkpointLabel"
       :disabled="isDisabled"
       @click="sync"
     ></UButton>

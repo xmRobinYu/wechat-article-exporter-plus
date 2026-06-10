@@ -18,13 +18,20 @@ import GridAccountActions from '~/components/grid/AccountActions.vue';
 import GridLoadProgress from '~/components/grid/LoadProgress.vue';
 import ConfirmModal from '~/components/modal/Confirm.vue';
 import LoginModal from '~/components/modal/Login.vue';
+import SetIncrementalCheckpointModal from '~/components/modal/SetIncrementalCheckpoint.vue';
 import toastFactory from '~/composables/toast';
 import useLoginCheck from '~/composables/useLoginCheck';
 import { IMAGE_PROXY, websiteName } from '~/config';
 import { sharedGridOptions } from '~/config/shared-grid-options';
 import { deleteAccountData } from '~/store/v2';
 import { getArticleCache, hitCache } from '~/store/v2/article';
-import { getAllInfo, getInfoCache, importMpAccounts, type MpAccount } from '~/store/v2/info';
+import {
+  getAllInfo,
+  getInfoCache,
+  importMpAccounts,
+  setLatestSyncedArticleTime,
+  type MpAccount,
+} from '~/store/v2/info';
 import type { AccountManifest } from '~/types/account';
 import type { Preferences } from '~/types/preferences';
 import { exportAccountJsonFile } from '~/utils/exporter';
@@ -83,7 +90,7 @@ const isSyncing = ref(false);
 const syncingRowId = ref<string | null>(null);
 
 const syncTimer = ref<number | null>(null);
-
+const syncMode = useLocalStorage<'incremental' | 'full'>('account-sync-mode', 'incremental');
 async function _load(account: MpAccount, begin: number, loadMore: boolean, promise: PromiseInstance) {
   if (isCanceled.value) {
     isCanceled.value = false; // 这里需要将状态复位
@@ -111,10 +118,15 @@ async function _load(account: MpAccount, begin: number, loadMore: boolean, promi
   const count = articles.filter(article => article.itemidx === 1).length; // 消息数
   begin += count;
 
-  // 检查是否可以「快进」，也就是存在比 lastArticle 更早的缓存数据
+  // 检查是否可以「快进」，也就是已经同步过更早的历史数据
   // todo: 这里还可以继续优化，防止出现多段不连续的范围
   const lastArticle = articles.at(-1);
-  if (lastArticle && lastArticle.create_time < account.last_update_time!) {
+  if (
+    syncMode.value === 'incremental' &&
+    lastArticle &&
+    account.latest_synced_article_time &&
+    lastArticle.update_time < account.latest_synced_article_time
+  ) {
     if (await hitCache(account.fakeid, lastArticle.create_time)) {
       const cachedArticles = await getArticleCache(account.fakeid, lastArticle.create_time);
 
@@ -179,8 +191,9 @@ async function loadSelectedAccountArticle() {
     for (const account of rows) {
       await loadAccountArticle(account);
     }
+    const modeHint = syncMode.value === 'incremental' ? '（模式：仅新增）' : '（模式：全量）';
     const rangeHint = isSyncAll() ? '' : `（同步范围：${getSyncRangeLabel()}）`;
-    toast.success('同步完成', `已成功同步 ${rows.length} 个公众号${rangeHint}`);
+    toast.success('同步完成', `已成功同步 ${rows.length} 个公众号${modeHint}${rangeHint}`);
   } catch (e: any) {
     toast.error('同步失败', e.message);
   }
@@ -244,6 +257,20 @@ const columnDefs = ref<ColDef[]>([
     filterParams: createDateColumnFilterParams(),
     filterValueGetter: (params: ValueGetterParams) => {
       return new Date(params.getValue('update_time') * 1000);
+    },
+    minWidth: 180,
+    cellClass: 'flex justify-center items-center font-mono',
+  },
+  {
+    colId: 'latest_synced_article_time',
+    headerName: '增量停点',
+    field: 'latest_synced_article_time',
+    valueFormatter: p => (p.value ? formatTimeStamp(p.value) : ''),
+    filter: 'agDateColumnFilter',
+    filterParams: createDateColumnFilterParams(),
+    filterValueGetter: (params: ValueGetterParams) => {
+      const value = params.getValue('latest_synced_article_time');
+      return value ? new Date(value * 1000) : null;
     },
     minWidth: 180,
     cellClass: 'flex justify-center items-center font-mono',
@@ -426,6 +453,53 @@ function deleteSelectedAccounts() {
   });
 }
 
+function openSetIncrementalCheckpoint() {
+  const rows = getSelectedRows();
+  if (rows.length !== 1) {
+    toast.info('提示', '请先且仅选择 1 个公众号');
+    return;
+  }
+
+  const account = rows[0];
+  modal.open(SetIncrementalCheckpointModal, {
+    title: `设置增量停点：${account.nickname}`,
+    currentValue: account.latest_synced_article_time,
+    async onConfirm(ts?: number) {
+      await setLatestSyncedArticleTime(account.fakeid, ts);
+      await refresh();
+      toast.success('设置成功', ts ? `增量停点已设置为 ${formatTimeStamp(ts)}` : '增量停点已清空');
+    },
+  });
+}
+
+async function setCheckpointToNow() {
+  const rows = getSelectedRows();
+  if (rows.length !== 1) {
+    toast.info('提示', '请先且仅选择 1 个公众号');
+    return;
+  }
+
+  const account = rows[0];
+  const now = Math.floor(Date.now() / 1000);
+  await setLatestSyncedArticleTime(account.fakeid, now);
+  await refresh();
+  toast.success('设置成功', `已将【${account.nickname}】的增量同步停点设置为当前时间`);
+}
+
+async function clearCheckpointAndFullSync() {
+  const rows = getSelectedRows();
+  if (rows.length !== 1) {
+    toast.info('提示', '请先且仅选择 1 个公众号');
+    return;
+  }
+
+  const account = rows[0];
+  await setLatestSyncedArticleTime(account.fakeid, undefined);
+  await refresh();
+  await loadAccountArticle(account);
+  toast.success('操作完成', `已清空【${account.nickname}】的增量同步停点，并启动全量同步`);
+}
+
 // 导入公众号
 const fileRef = ref<HTMLInputElement | null>(null);
 const importBtnLoading = ref(false);
@@ -521,6 +595,30 @@ const { getActualDateRange } = useSyncDeadline();
           >删除</UButton
         >
         <UButton
+          color="amber"
+          icon="i-lucide:calendar-sync"
+          class="disabled:opacity-35"
+          :disabled="isDeleting || !hasSelectedRows"
+          @click="openSetIncrementalCheckpoint"
+          >设置增量停点</UButton
+        >
+        <UButton
+          color="emerald"
+          icon="i-lucide:circle-arrow-up"
+          class="disabled:opacity-35"
+          :disabled="isDeleting || isSyncing || !hasSelectedRows"
+          @click="setCheckpointToNow"
+          >从最新开始同步</UButton
+        >
+        <UButton
+          color="orange"
+          icon="i-lucide:rotate-ccw"
+          class="disabled:opacity-35"
+          :disabled="isDeleting || isSyncing || !hasSelectedRows"
+          @click="clearCheckpointAndFullSync"
+          >清空停点并全量同步</UButton
+        >
+        <UButton
           color="black"
           icon="i-heroicons:arrow-path-rounded-square-20-solid"
           class="disabled:opacity-35"
@@ -529,8 +627,20 @@ const { getActualDateRange } = useSyncDeadline();
           @click="loadSelectedAccountArticle"
           >同步</UButton
         >
+        <USelectMenu
+          v-model="syncMode"
+          class="w-32"
+          :options="[
+            { label: '仅新增', value: 'incremental' },
+            { label: '全量', value: 'full' },
+          ]"
+          value-attribute="value"
+          option-attribute="label"
+        />
         <div class="hidden xl:flex flex-1 justify-end">
-          <span class="self-end text-sm text-blue-500 font-medium">同步范围: {{ getActualDateRange() }}</span>
+          <span class="self-end text-sm text-blue-500 font-medium">
+            同步模式: {{ syncMode === 'incremental' ? '仅新增' : '全量' }} ｜ 同步范围: {{ getActualDateRange() }}
+          </span>
         </div>
       </header>
 

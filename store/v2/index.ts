@@ -1,8 +1,9 @@
+import { request } from '#shared/utils/request';
 import { db } from './db';
 
 // 删除公众号数据
 export async function deleteAccountData(ids: string[]): Promise<void> {
-  return db.transaction(
+  await db.transaction(
     'rw',
     [
       'api',
@@ -35,4 +36,10 @@ export async function deleteAccountData(ids: string[]): Promise<void> {
       db['resource-map'].where('fakeid').anyOf(ids).delete();
     }
   );
+  await request('/api/internal/accounts/delete', {
+    method: 'POST',
+    body: {
+      fakeids: ids,
+    },
+  });
 }

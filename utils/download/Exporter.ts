@@ -21,6 +21,7 @@ import type { DownloadOptions } from './types';
 type ExportType = 'excel' | 'json' | 'html' | 'txt' | 'markdown' | 'word' | 'pdf';
 
 const preferences: Ref<Preferences> = usePreferences() as unknown as Ref<Preferences>;
+const EXPORT_DIRECTORY_HANDLE_KEY = 'wx-export-directory-handle';
 
 export class Exporter extends BaseDownloader {
   private exportType: ExportType = 'html';
@@ -924,12 +925,98 @@ ${commentHTML}
   // 获取文件存储目录
   private async acquireExportDirectoryHandle(): Promise<void> {
     if (!this.exportRootDirectoryHandle) {
+      const cachedHandle = await this.getCachedExportDirectoryHandle();
+      if (cachedHandle) {
+        const permission = await cachedHandle.queryPermission({ mode: 'readwrite' });
+        if (permission === 'granted') {
+          this.exportRootDirectoryHandle = cachedHandle;
+          return;
+        }
+
+        if (permission === 'prompt') {
+          const requested = await cachedHandle.requestPermission({ mode: 'readwrite' });
+          if (requested === 'granted') {
+            this.exportRootDirectoryHandle = cachedHandle;
+            return;
+          }
+        }
+      }
+
       // @ts-ignore
       this.exportRootDirectoryHandle = await window.showDirectoryPicker({
         mode: 'readwrite',
         startIn: 'downloads',
       });
+      await this.cacheExportDirectoryHandle(this.exportRootDirectoryHandle);
     }
+  }
+
+  private async getCachedExportDirectoryHandle(): Promise<FileSystemDirectoryHandle | null> {
+    if (!import.meta.client || !('indexedDB' in window)) {
+      return null;
+    }
+
+    return await new Promise(resolve => {
+      const request = window.indexedDB.open('wx-exporter-settings', 1);
+
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('kv')) {
+          db.createObjectStore('kv');
+        }
+      };
+
+      request.onsuccess = () => {
+        const db = request.result;
+        const tx = db.transaction('kv', 'readonly');
+        const store = tx.objectStore('kv');
+        const getRequest = store.get(EXPORT_DIRECTORY_HANDLE_KEY);
+
+        getRequest.onsuccess = () => resolve((getRequest.result as FileSystemDirectoryHandle) || null);
+        getRequest.onerror = () => {
+          console.warn('读取导出目录句柄失败:', getRequest.error);
+          resolve(null);
+        };
+      };
+
+      request.onerror = () => {
+        console.warn('打开导出目录缓存失败:', request.error);
+        resolve(null);
+      };
+    });
+  }
+
+  private async cacheExportDirectoryHandle(handle: FileSystemDirectoryHandle): Promise<void> {
+    if (!import.meta.client || !('indexedDB' in window)) {
+      return;
+    }
+
+    await new Promise<void>(resolve => {
+      const request = window.indexedDB.open('wx-exporter-settings', 1);
+
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('kv')) {
+          db.createObjectStore('kv');
+        }
+      };
+
+      request.onsuccess = () => {
+        const db = request.result;
+        const tx = db.transaction('kv', 'readwrite');
+        tx.objectStore('kv').put(handle, EXPORT_DIRECTORY_HANDLE_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => {
+          console.warn('缓存导出目录句柄失败:', tx.error);
+          resolve();
+        };
+      };
+
+      request.onerror = () => {
+        console.warn('打开导出目录缓存失败:', request.error);
+        resolve();
+      };
+    });
   }
 
   // 写入文件
