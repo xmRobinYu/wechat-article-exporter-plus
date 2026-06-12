@@ -12,6 +12,7 @@ import type {
 import { AgGridVue } from 'ag-grid-vue3';
 import { defu } from 'defu';
 import { formatTimeStamp } from '#shared/utils/helpers';
+import { request } from '#shared/utils/request';
 import { getArticleList } from '~/apis';
 import GlobalSearchAccountDialog from '~/components/global/SearchAccountDialog.vue';
 import GridAccountActions from '~/components/grid/AccountActions.vue';
@@ -543,17 +544,19 @@ async function repairSelectedAccounts() {
   }
 
   try {
-    isCanceled.value = false;
-    const previousMode = syncMode.value;
-    syncMode.value = 'full';
-    for (const account of targets) {
-      await loadAccountArticle(account);
-    }
-    syncMode.value = previousMode;
+    isSyncing.value = true;
+    await request('/api/internal/accounts/repair', {
+      method: 'POST',
+      body: {
+        fakeids: targets.map(account => account.fakeid),
+      },
+    });
     await refresh();
     toast.success('修复完成', `已对 ${targets.length} 个公众号执行全量同步修复文章明细`);
   } catch (e: any) {
     toast.error('修复失败', e.message);
+  } finally {
+    isSyncing.value = false;
   }
 }
 
